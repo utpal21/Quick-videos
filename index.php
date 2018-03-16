@@ -9,115 +9,96 @@
  *    $ composer require google/apiclient:~2.0
  */
 if (!file_exists(__DIR__ . '/vendor/autoload.php')) {
-  throw new \Exception('please run "composer require google/apiclient:~2.0" in "' . __DIR__ .'"');
+    throw new \Exception('please run "composer require google/apiclient:~2.0" in "' . __DIR__ .'"');
 }
 
 require_once __DIR__ . '/vendor/autoload.php';
-session_start();
 
-/*
- * You can acquire an OAuth 2.0 client ID and client secret from the
- * {{ Google Cloud Console }} <{{ https://cloud.google.com/console }}>
- * For more information about using OAuth 2.0 to access Google APIs, please see:
- * <https://developers.google.com/youtube/v3/guides/authentication>
- * Please ensure that you have enabled the YouTube Data API for your project.
- */
-$OAUTH2_CLIENT_ID = '252624051691-ql9rm7mgt0mdrpujo5c4g5tjva063fet.apps.googleusercontent.com';
-$OAUTH2_CLIENT_SECRET = 'Ry7I9VvCyh341_GKCgtZ-7zT';
+$htmlBody = <<<END
+<form method="GET">
+  <div>
+    Search Term: <input type="search" id="q" name="q" placeholder="Enter Search Term">
+  </div>
+  <div>
+    Max Results: <input type="number" id="maxResults" name="maxResults" min="1" max="50" step="1" value="25">
+  </div>
+  <input type="submit" value="Search">
+</form>
+END;
 
-$client = new Google_Client();
-$client->setClientId($OAUTH2_CLIENT_ID);
-$client->setClientSecret($OAUTH2_CLIENT_SECRET);
-$client->setScopes('https://www.googleapis.com/auth/youtube');
-$redirect = filter_var('http://' . $_SERVER['HTTP_HOST'] . $_SERVER['PHP_SELF'],
-    FILTER_SANITIZE_URL);
-$client->setRedirectUri($redirect);
-$client->RefreshToken('1/5zNVXZP3D4o7IPqGtKSRbJ-EavhWUrN8GWMgvTVsdGE');
+// This code will execute if the user entered a search query in the form
+// and submitted the form. Otherwise, the page displays the form above.
+if (isset($_GET['q']) && isset($_GET['maxResults'])) {
+    /*
+     * Set $DEVELOPER_KEY to the "API key" value from the "Access" tab of the
+     * {{ Google Cloud Console }} <{{ https://cloud.google.com/console }}>
+     * Please ensure that you have enabled the YouTube Data API for your project.
+     */
+    $DEVELOPER_KEY = 'AIzaSyCmpEJ8Kz9kiTYXWQWioW2mNWJk78XEjrY';
 
-// Define an object that will be used to make all API requests.
-$youtube = new Google_Service_YouTube($client);
+    $client = new Google_Client();
+    $client->setDeveloperKey($DEVELOPER_KEY);
 
-// Check if an auth token exists for the required scopes
-$tokenSessionKey = 'token-' . $client->prepareScopes();
-if (isset($_GET['code'])) {
-  if (strval($_SESSION['state']) !== strval($_GET['state'])) {
-    die('The session state did not match.');
-  }
-
-  $client->authenticate($_GET['code']);
-  $_SESSION[$tokenSessionKey] = $client->getAccessToken();
-  header('Location: ' . $redirect);
-}
-
-if (isset($_SESSION[$tokenSessionKey])) {
-  $client->setAccessToken($_SESSION[$tokenSessionKey]);
-}
-
-// Check to ensure that the access token was successfully acquired.
-// Check to ensure that the access token was successfully acquired.
-if ($client->getAccessToken()) {
-  try {
-    // Call the channels.list method to retrieve information about the
-    // currently authenticated user's channel.
-    $channelsResponse = $youtube->channels->listChannels('contentDetails', array(
-      'mine' => 'true',
-    ));
+    // Define an object that will be used to make all API requests.
+    $youtube = new Google_Service_YouTube($client);
 
     $htmlBody = '';
-    foreach ($channelsResponse['items'] as $channel) {
-      // Extract the unique playlist ID that identifies the list of videos
-      // uploaded to the channel, and then call the playlistItems.list method
-      // to retrieve that list.
-      $uploadsListId = $channel['contentDetails']['relatedPlaylists']['uploads'];
+    try {
 
-      $playlistItemsResponse = $youtube->playlistItems->listPlaylistItems('snippet', array(
-        'playlistId' => $uploadsListId,
-        'maxResults' => 50
-      ));
+        // Call the search.list method to retrieve results matching the specified
+        // query term.
+        $searchResponse = $youtube->search->listSearch('id,snippet', array(
+            'q' => '',
+            'maxResults' => $_GET['maxResults'],
+        ));
 
-      $htmlBody .= "<h3>Videos in list $uploadsListId</h3><ul>";
-      foreach ($playlistItemsResponse['items'] as $playlistItem) {
-        $htmlBody .= sprintf('<li>%s (%s)</li>', $playlistItem['snippet']['title'],
-          $playlistItem['snippet']['resourceId']['videoId']);
-      }
-      $htmlBody .= '</ul>';
+        $videos = '';
+        $channels = '';
+        $playlists = '';
+
+        // Add each result to the appropriate list, and then display the lists of
+        // matching videos, channels, and playlists.
+        foreach ($searchResponse['items'] as $searchResult) {
+            switch ($searchResult['id']['kind']) {
+                case 'youtube#video':
+                    $videos .= sprintf('<li>%s (%s)</li>',
+                        $searchResult['snippet']['title'], $searchResult['id']['videoId']);
+                    break;
+                case 'youtube#channel':
+                    $channels .= sprintf('<li>%s (%s)</li>',
+                        $searchResult['snippet']['title'], $searchResult['id']['channelId']);
+                    break;
+                case 'youtube#playlist':
+                    $playlists .= sprintf('<li>%s (%s)</li>',
+                        $searchResult['snippet']['title'], $searchResult['id']['playlistId']);
+                    break;
+            }
+        }
+
+        $htmlBody .= <<<END
+    <h3>Videos</h3>
+    <ul>$videos</ul>
+    <h3>Channels</h3>
+    <ul>$channels</ul>
+    <h3>Playlists</h3>
+    <ul>$playlists</ul>
+END;
+    } catch (Google_Service_Exception $e) {
+        $htmlBody .= sprintf('<p>A service error occurred: <code>%s</code></p>',
+            htmlspecialchars($e->getMessage()));
+    } catch (Google_Exception $e) {
+        $htmlBody .= sprintf('<p>An client error occurred: <code>%s</code></p>',
+            htmlspecialchars($e->getMessage()));
     }
-  } catch (Google_Service_Exception $e) {
-    $htmlBody = sprintf('<p>A service error occurred: <code>%s</code></p>',
-      htmlspecialchars($e->getMessage()));
-  } catch (Google_Exception $e) {
-    $htmlBody = sprintf('<p>An client error occurred: <code>%s</code></p>',
-      htmlspecialchars($e->getMessage()));
-  }
-
-  $_SESSION[$tokenSessionKey] = $client->getAccessToken();
-} elseif ($OAUTH2_CLIENT_ID == 'REPLACE_ME') {
-  $htmlBody = <<<END
-  <h3>Client Credentials Required</h3>
-  <p>
-    You need to set <code>\$OAUTH2_CLIENT_ID</code> and
-    <code>\$OAUTH2_CLIENT_ID</code> before proceeding.
-  <p>
-END;
-} else {
-  $state = mt_rand();
-  $client->setState($state);
-  $_SESSION['state'] = $state;
-
-  $authUrl = $client->createAuthUrl();
-  $htmlBody = <<<END
-  <h3>Authorization Required</h3>
-  <p>You need to <a href="$authUrl">authorize access</a> before proceeding.<p>
-END;
 }
 ?>
 
 <!doctype html>
 <html>
-  <head>
-    <title>My Uploads</title>
-  </head>
-  <body>
-    <?=$htmlBody?>
-  </body>
+<head>
+    <title>YouTube Search</title>
+</head>
+<body>
+<?=$htmlBody?>
+</body>
 </html>
